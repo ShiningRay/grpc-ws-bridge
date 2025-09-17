@@ -1,0 +1,130 @@
+syntax = "proto3";
+
+package nvidia.riva.asr;
+
+option csharp_namespace = "Nvidia.Riva.Asr";
+
+// Service for automatic speech recognition
+service RivaSpeechRecognition {
+  // Streaming speech recognition
+  rpc StreamingRecognize(stream StreamingRecognizeRequest) returns (stream StreamingRecognizeResponse);
+  
+  // Non-streaming speech recognition
+  rpc Recognize(RecognizeRequest) returns (RecognizeResponse);
+}
+
+// Configuration for streaming recognition
+message StreamingRecognitionConfig {
+  RecognitionConfig config = 1;
+  bool interim_results = 2;
+  int32 max_alternatives = 3;
+  bool enable_word_time_offsets = 4;
+  bool enable_automatic_punctuation = 5;
+  bool enable_separate_recognition_per_channel = 6;
+  string custom_configuration = 100;
+}
+
+// Configuration for recognition
+message RecognitionConfig {
+  enum Encoding {
+    ENCODING_UNSPECIFIED = 0;
+    LINEAR_PCM = 1;
+    FLAC = 2;
+    MULAW = 3;
+    ALAW = 4;
+    LINEAR16 = 5;
+  }
+  
+  Encoding encoding = 1;
+  int32 sample_rate_hertz = 2;
+  string language_code = 3;
+  int32 max_alternatives = 4;
+  AudioChannelConfig audio_channel_config = 5;
+  bool enable_automatic_punctuation = 11;
+  bool enable_separate_recognition_per_channel = 12;
+  string model = 14;
+  SpeechContext speech_context = 15;
+  int32 audio_channel_count = 17;
+  bool enable_word_time_offsets = 18;
+  // Config to enable speaker diarization and set additional parameters
+  SpeakerDiarizationConfig diarization_config = 19;
+  map<string, string> metadata = 20;
+  string custom_configuration = 100;
+}
+
+message AudioChannelConfig {
+  int32 audio_channel_count = 1;
+}
+
+message SpeechContext {
+  repeated string phrases = 1;
+  float boost = 2;
+}
+
+// Configuration for speaker diarization
+message SpeakerDiarizationConfig {
+  // Enables speaker detection for each recognized word
+  bool enable_speaker_diarization = 1;
+  
+  // Minimum number of speakers expected in the conversation
+  // Defaults to 2 if not set
+  int32 min_speaker_count = 2;
+  
+  // Maximum number of speakers in the conversation
+  // Defaults to 8 if not set
+  int32 max_speaker_count = 3;
+}
+
+// Streaming recognition request
+message StreamingRecognizeRequest {
+  oneof streaming_request {
+    StreamingRecognitionConfig streaming_config = 1;
+    bytes audio_content = 2;
+  }
+}
+
+// Streaming recognition response
+message StreamingRecognizeResponse {
+  repeated StreamingRecognitionResult results = 1;
+  string error = 2;
+}
+
+message StreamingRecognitionResult {
+  repeated SpeechRecognitionAlternative alternatives = 1;
+  bool is_final = 2;
+  float stability = 3;
+  int32 channel_tag = 4;
+  string audio_processed = 5;
+}
+
+message SpeechRecognitionAlternative {
+  string transcript = 1;
+  float confidence = 2;
+  repeated WordInfo words = 3;
+}
+
+message WordInfo {
+  string word = 1;
+  float start_time = 2;
+  float end_time = 3;
+  float confidence = 4;
+  // Specifies which speaker was detected to have spoken this word
+  // Only set if enable_speaker_diarization = 'true'
+  int32 speaker_tag = 5;
+}
+
+// Non-streaming request/response
+message RecognizeRequest {
+  RecognitionConfig config = 1;
+  bytes audio = 2;
+}
+
+message RecognizeResponse {
+  repeated SpeechRecognitionResult results = 1;
+}
+
+message SpeechRecognitionResult {
+  repeated SpeechRecognitionAlternative alternatives = 1;
+  int32 channel_tag = 2;
+  string audio_processed = 3;
+}

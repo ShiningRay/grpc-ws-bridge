@@ -9,7 +9,8 @@
     "dev": "node --watch src/index.js",
     "mock": "node examples/mock-server.js",
     "bridge:demo": "node src/index.js --ws-port 8080 --proto ./examples/protos/demo.proto --include ./examples/protos --default-target localhost:50051",
-    "ws:demo": "node examples/ws-demo.js"
+    "ws:demo": "node examples/ws-demo.js",
+    "ws:riva": "node examples/ws-riva-demo.js --ws ws://localhost:8080 --mode streaming --wav examples/16k16bit.wav"
   },
   "engines": {
     "node": ">=18"

@@ -29,6 +29,53 @@ function preview(obj, max = 400) {
   }
 }
 
+function ensureArray(x) {
+  if (x == null) return [];
+  return Array.isArray(x) ? x : [x];
+}
+
+function decodeBase64ToBuffer(v) {
+  if (typeof v !== "string") return v;
+  try { return Buffer.from(v, "base64"); } catch (_) { return v; }
+}
+
+function setByPath(root, pathParts, transform) {
+  if (!root) return;
+  let obj = root;
+  for (let i = 0; i < pathParts.length - 1; i++) {
+    const k = pathParts[i];
+    if (obj == null) return;
+    obj = obj[k];
+  }
+  const last = pathParts[pathParts.length - 1];
+  if (obj && Object.prototype.hasOwnProperty.call(obj, last)) {
+    obj[last] = transform(obj[last]);
+  }
+}
+
+function decodeBinaryFields(obj, fieldPaths = []) {
+  for (const p of ensureArray(fieldPaths)) {
+    const parts = String(p).split(".").filter(Boolean);
+    if (parts.length > 0) setByPath(obj, parts, decodeBase64ToBuffer);
+  }
+}
+
+function decodeKnownBytesHeuristics(obj) {
+  if (obj == null || typeof obj !== "object") return;
+  const keys = Object.keys(obj);
+  for (const k of keys) {
+    const v = obj[k];
+    if (v == null) continue;
+    if (typeof v === "string" && (k === "audio" || k === "audio_content")) {
+      obj[k] = decodeBase64ToBuffer(v);
+    } else if (Array.isArray(v)) {
+      for (const item of v) decodeKnownBytesHeuristics(item);
+    } else if (typeof v === "object") {
+      decodeKnownBytesHeuristics(v);
+    }
+  }
+}
+
 const argv = yargs(hideBin(process.argv))
   .option("ws-port", { type: "number", default: 8080, describe: "WebSocket server port" })
   .option("proto", { type: "array", describe: "Path(s) to .proto file(s)", demandOption: true })
@@ -131,7 +178,12 @@ function onStart(ws, msg) {
     });
     if (!requestStream && !responseStream) {
       // unary
-      const call = client[methodName](payload || {}, md, (err, response) => {
+      const callPayload = payload ? { ...payload } : {};
+      if (msg.binaryAsBase64) {
+        decodeBinaryFields(callPayload, msg.binaryFields);
+        decodeKnownBytesHeuristics(callPayload);
+      }
+      const call = client[methodName](callPayload, md, (err, response) => {
         if (err) {
           dlog("error", { callId, error: asErrorPayload(err) });
           return send(ws, { type: "error", callId, error: asErrorPayload(err) });
@@ -140,10 +192,15 @@ function onStart(ws, msg) {
         send(ws, { type: "data", callId, payload: response });
       });
       makeUnaryHandlers(call);
-      state.calls.set(callId, { kind: "unary", call, info: { method, target: tgt } });
+      state.calls.set(callId, { kind: "unary", call, info: { method, target: tgt }, opts: { binaryAsBase64: !!msg.binaryAsBase64, binaryFields: ensureArray(msg.binaryFields) } });
     } else if (!requestStream && responseStream) {
       // server streaming
-      const stream = client[methodName](payload || {}, md);
+      const callPayload = payload ? { ...payload } : {};
+      if (msg.binaryAsBase64) {
+        decodeBinaryFields(callPayload, msg.binaryFields);
+        decodeKnownBytesHeuristics(callPayload);
+      }
+      const stream = client[methodName](callPayload, md);
       stream.on("metadata", (headers) => {
         dlog("headers", { callId, method, metadata: metadataToObject(headers) });
         send(ws, { type: "headers", callId, metadata: metadataToObject(headers) });
@@ -163,7 +220,7 @@ function onStart(ws, msg) {
         dlog("status", { callId, method, status: statusObject(status) });
       });
       stream.on("end", () => { /* status event will follow */ });
-      state.calls.set(callId, { kind: "server", call: stream, info: { method, target: tgt } });
+      state.calls.set(callId, { kind: "server", call: stream, info: { method, target: tgt }, opts: { binaryAsBase64: !!msg.binaryAsBase64, binaryFields: ensureArray(msg.binaryFields) } });
     } else if (requestStream && !responseStream) {
       // client streaming
       const stream = client[methodName](md, (err, resp) => {
@@ -180,9 +237,14 @@ function onStart(ws, msg) {
         s.calls.delete(callId);
         dlog("status", { callId, method, status: statusObject(status) });
       });
-      state.calls.set(callId, { kind: "client", call: stream, info: { method, target: tgt } });
+      state.calls.set(callId, { kind: "client", call: stream, info: { method, target: tgt }, opts: { binaryAsBase64: !!msg.binaryAsBase64, binaryFields: ensureArray(msg.binaryFields) } });
       // If payload is provided at start, treat as first write
-      if (payload) { dlog("write", { callId, method, payloadPreview: preview(payload, 200) }); stream.write(payload); }
+      if (payload) {
+        const writeObj = { ...payload };
+        if (msg.binaryAsBase64) { decodeBinaryFields(writeObj, msg.binaryFields); decodeKnownBytesHeuristics(writeObj); }
+        dlog("write", { callId, method, payloadPreview: preview(writeObj, 200) });
+        stream.write(writeObj);
+      }
     } else {
       // bidi streaming
       const stream = client[methodName](md);
@@ -204,8 +266,13 @@ function onStart(ws, msg) {
         s.calls.delete(callId);
         dlog("status", { callId, method, status: statusObject(status) });
       });
-      state.calls.set(callId, { kind: "bidi", call: stream, info: { method, target: tgt } });
-      if (payload) { dlog("write", { callId, method, payloadPreview: preview(payload, 200) }); stream.write(payload); }
+      state.calls.set(callId, { kind: "bidi", call: stream, info: { method, target: tgt }, opts: { binaryAsBase64: !!msg.binaryAsBase64, binaryFields: ensureArray(msg.binaryFields) } });
+      if (payload) {
+        const writeObj = { ...payload };
+        if (msg.binaryAsBase64) { decodeBinaryFields(writeObj, msg.binaryFields); decodeKnownBytesHeuristics(writeObj); }
+        dlog("write", { callId, method, payloadPreview: preview(writeObj, 200) });
+        stream.write(writeObj);
+      }
     }
   } catch (e) {
     return send(ws, { type: "error", callId, error: asErrorPayload(e) });
@@ -221,8 +288,14 @@ function onWrite(ws, msg) {
     return send(ws, { type: "error", callId, error: { code: grpc.status.FAILED_PRECONDITION, details: "Not a writable stream", metadata: {} } });
   }
   try {
-    dlog("write", { callId, method: entry.info?.method, payloadPreview: preview(payload, 200) });
-    entry.call.write(payload || {});
+    let writeObj = payload || {};
+    if (entry.opts?.binaryAsBase64) {
+      writeObj = { ...writeObj };
+      decodeBinaryFields(writeObj, entry.opts.binaryFields);
+      decodeKnownBytesHeuristics(writeObj);
+    }
+    dlog("write", { callId, method: entry.info?.method, payloadPreview: preview(writeObj, 200) });
+    entry.call.write(writeObj);
   } catch (e) {
     send(ws, { type: "error", callId, error: asErrorPayload(e) });
   }

@@ -39,6 +39,8 @@
   "method": "my.pkg.Greeter/SayHello", // 全限定 Service/Method
   "target": "localhost:50051",        // 可选，覆盖 default-target
   "metadata": { "authorization": "Bearer ..." }, // 可选
+  "binaryAsBase64": true,               // 可选：若为 true，会按规则解码 base64 -> Buffer
+  "binaryFields": ["audio", "audio_content"], // 可选：显式指定需要 base64 解码为 Buffer 的字段路径
   "payload": { ... } // 可选，unary / server-streaming 可在 start 即发送首个请求
 }
 ```
@@ -103,6 +105,10 @@
 说明：
 - Metadata 的 `-bin` 后缀键使用 base64 字符串表示二进制值；非二进制值为普通字符串或字符串数组。
 - `payload` 应与对应 proto 的消息结构一致（`int64`/`uint64` 字段会以字符串表示，枚举以字符串表示）。
+- 二进制字段（bytes）：
+  - 若 `binaryAsBase64: true`，Bridge 会将 `binaryFields` 指定的字段（dot-path）从 base64 字符串解码为 Buffer 后再发往 gRPC。
+  - 若未指定 `binaryFields`，Bridge 会采用内置启发式对常见字段名进行解码（如 `audio`、`audio_content`）。
+  - 建议显式传入 `binaryFields` 以避免误判。
 
 **实现要点**
 - 使用 `@grpc/proto-loader` 的选项：`longs: String, enums: String, defaults: true, oneofs: true`，将 64 位整型序列化为字符串以避免精度问题。
@@ -127,3 +133,20 @@ Demo 中包含以下 RPC：
 - `demo.Greeter/GreetMany`（server streaming）
 - `demo.Greeter/AccumulateGreetings`（client streaming）
 - `demo.Greeter/Chat`（bidirectional streaming）
+
+**Riva ASR 示例（远程服务）**
+- 前提：你已将 `examples/protos/riva_asr.proto` 放置到仓库（已包含）。
+- 启动 Bridge（可指向远端 Riva）：
+  - 纯明文：`node src/index.js --ws-port 8080 --proto ./examples/protos/riva_asr.proto --include ./examples/protos --default-target <riva-host:port>`
+  - TLS：`node src/index.js --ws-port 8080 --proto ./examples/protos/riva_asr.proto --include ./examples/protos --default-target <riva-host:port> --secure [--tls-ca <ca.pem>]`
+- 运行 WebSocket Riva 示例客户端：
+  - 流式：`node examples/ws-riva-demo.js --mode streaming --wav examples/16k16bit.wav --ws ws://localhost:8080 --target <riva-host:port> --lang en-US --encoding LINEAR16 [--auth <token>] [--md key=value ...] [--wav-container]`
+  - 单次：`node examples/ws-riva-demo.js --mode unary --wav examples/16k16bit.wav --ws ws://localhost:8080 --target <riva-host:port> --lang en-US --encoding LINEAR16 [--auth <token>] [--md key=value ...] [--wav-container]`
+  - 示例 metadata：`--md x-feature=foo --md x-route=asr`
+  - 如果远端期望 WAV 容器（含文件头），可加 `--wav-container`；否则默认仅发送纯 PCM 数据段。
+- 说明：
+  - 客户端会读取 WAV，解析出 PCM 数据，仅将数据部分（去头）以 base64 发送。
+  - `--target` 可覆盖 Bridge 的默认目标，实现同一 Bridge 下动态路由到不同 gRPC 服务实例。
+  - Riva proto 中方法：
+    - `nvidia.riva.asr.RivaSpeechRecognition/Recognize`（unary，字段 `audio`）
+    - `nvidia.riva.asr.RivaSpeechRecognition/StreamingRecognize`（bidi，首条 `streaming_config`，随后多条 `audio_content`）
