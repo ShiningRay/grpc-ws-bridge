@@ -1,0 +1,23 @@
+{
+  "name": "grpc-ws-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A WebSocket proxy/bridge for gRPC services with support for unary and streaming (server, client, bidi).",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "mock": "node examples/mock-server.js",
+    "bridge:demo": "node src/index.js --ws-port 8080 --proto ./examples/protos/demo.proto --include ./examples/protos --default-target localhost:50051",
+    "ws:demo": "node examples/ws-demo.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.11.1",
+    "@grpc/proto-loader": "^0.7.7",
+    "ws": "^8.17.0",
+    "yargs": "^17.7.2"
+  }
+}
